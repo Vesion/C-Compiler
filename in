@@ -1,2 +1,5 @@
-hello world
-yes i am c
+#include <stdio.h>
+int main(int argc, char **argv) {
+    printf("hello word\n");
+    return 0;
+}

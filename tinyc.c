@@ -3,65 +3,61 @@
 #include <memory.h>
 #include <string.h>
 
-int token; // current read token
-int token_val; // value of current token, mainly for number
-char *src,  // pointer to source code
+int token; // current token
+int token_val; // value of current token, mainly for numbers
+char *src, // pointer to source code
      *old_src; // for dump
-int poolsize; // default size of some segments
-int line; // line number of source code
-
-int *text, // text/code segment
+int poolsize; // default size of many segments
+int line; // line number
+int *text, // text segment
     *old_text; // for dump
-char *data; // data segment
 int *stack; // stack
-int *pc, // program counter register, store the next instruction
-    *sp, // stack pointer register, maintain the address of stack top
-    *bp, // base pointer register, for function call
-    ax, // general register, store the result of one instruction
-    cycle; // counter of instructions
+char *data; // data segment
+int *pc, *bp, *sp, ax, cycle; // vm registers
+int *current_id, // current parsed ID
+    *symbols; // symbol table
+int *idmain; // ID of 'main' function
 
-int *current_id; // current parsed ID
-int *symbols; // symbol table
-int *idmain; // the 'main' function
+// instructions
+enum { LEA ,IMM ,JMP ,CALL,JZ  ,JNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PUSH,
+       OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,
+       OPEN,READ,CLOS,PRTF,MALC,MSET,MCMP,EXIT };
 
-// instructions of VM
+// tokens and classes (operators last and in precedence order)
 enum {
-    LEA, IMM, JMP, CALL, JZ, JNZ, ENT, ADJ, LEV, LI, LC, SI, SC, PUSH,
-    OR, XOR, AND, EQ, NE, LT, GT, LE, GE, SHL, SHR, ADD, SUB, MUL, DIV, MOD,
-    OPEN, READ, CLOS, PRTF, MALC, MSET, MCMP, EXIT
+  Num = 128, Fun, Sys, Glo, Loc, Id,
+  Char, Else, Enum, If, Int, Return, Sizeof, While,
+  Assign, Cond, Lor, Lan, Or, Xor, And, Eq, Ne, Lt, Gt, Le, Ge, Shl, Shr, Add, Sub, Mul, Div, Mod, Inc, Dec, Brak
 };
 
-// tokens and classes
-enum {
-    Num = 128, Fun, Sys, Glo, Loc, Id,
-    Char, Else, Enum, If, Int, Return, Sizeof, While,
-    Assign, Cond, Lor, Lan, Or, Xor, And, Eq, Ne, Lt, Gt, Le, Ge, Shl, Shr, Add, Sub, Mul, Div, Mod, Inc, Dec, Brak
-};
-
-// identifier
-enum {
-    Token, Hash, Name, Type, Class, Value, BType, BClass, BValue, IdSize
-};
+// fields of identifier
+enum {Token, Hash, Name, Type, Class, Value, BType, BClass, BValue, IdSize};
 
 // types of variable/function
-enum {
-    CHAR, INT, PTR
-};
+enum { CHAR, INT, PTR };
 
 int basetype; // the type of a declaration
 int expr_type; // the type of an expression
+
+int index_of_bp; // index of bp pointer on stack
 
 
 void next() {
     char *last_pos;
     int hash;
 
-    while (token == *src) {
+    while (token = *src) {
         ++src;
-
-        if (token == '\n') { ++line; }
+        // parse token here
+        if (token == '\n') {
+            ++line;
+            return;
+        }
         else if (token == '#') {
-            while (*src != 0 && *src != '\n') ++src;
+            // skip macro, because we will not support it
+            while (*src != 0 && *src != '\n') {
+                src++;
+            }
             return;
         }
         else if ((token >= 'a' && token <= 'z') || (token >= 'A' && token <= 'Z') || (token == '_')) {
@@ -70,40 +66,44 @@ void next() {
             hash = token;
             while ((*src >= 'a' && *src <= 'z') || (*src >= 'A' && *src <= 'Z') || (*src >= '0' && *src <= '9') || (*src == '_')) {
                 hash = hash * 147 + *src;
-                ++src;
+                src++;
             }
-            // check if has been in symbols table, linear search
+            // look for existing identifier, linear search
             current_id = symbols;
             while (current_id[Token]) {
-                if (current_id[Hash] == hash && !memcmp((char*)current_id[Name], last_pos, src-last_pos)) {
+                if (current_id[Hash] == hash && !memcmp((char *)current_id[Name], last_pos, src - last_pos)) {
+                    //found one, return
                     token = current_id[Token];
                     return;
                 }
                 current_id = current_id + IdSize;
             }
-            // store new identifier
+            // store new ID
             current_id[Name] = (int)last_pos;
             current_id[Hash] = hash;
             token = current_id[Token] = Id;
             return;
         }
         else if (token >= '0' && token <= '9') {
-            // parse numbers, decimal/hex/octal
+            // parse number, decimal/hex/oct
             token_val = token - '0';
-            if (token > 0) { // decimal
+            if (token_val > 0) {
+                // decimal
                 while (*src >= '0' && *src <= '9') {
-                    token_val = token_val * 10 + *src++ - '0';
+                    token_val = token_val*10 + *src++ - '0';
                 }
-            } else { // start with 0
-                if (*src == 'x' || *src == 'X') { // hex
-                    token = *src++;
-                    while ((token >= '0' && token <= '9') || (token >= 'a' && token <= 'f') || (token <= 'A' && token >= 'F')) {
-                        token_val = token_val * 16 + (token & 15) + (token >= 'A' ? 9  : 0);
-                        token = *src++;
+            } else {
+                if (*src == 'x' || *src == 'X') {
+                    //hex
+                    token = *++src;
+                    while ((token >= '0' && token <= '9') || (token >= 'a' && token <= 'f') || (token >= 'A' && token <= 'F')) {
+                        token_val = token_val * 16 + (token & 15) + (token >= 'A' ? 9 : 0);
+                        token = *++src;
                     }
-                } else { // oct
+                } else {
+                    // oct
                     while (*src >= '0' && *src <= '7') {
-                        token_val = token_val * 8 + *src++ - '0';
+                        token_val = token_val*8 + *src++ - '0';
                     }
                 }
             }
@@ -111,39 +111,47 @@ void next() {
             return;
         }
         else if (token == '"' || token == '\'') {
-            // parse string literal, tinyc only support '\n' escape character
-            // store string literal into data segement
+            // parse string literal, currently, the only supported escape character is '\n'
+            // store the string literal into data.
             last_pos = data;
             while (*src != 0 && *src != token) {
                 token_val = *src++;
                 if (token_val == '\\') {
+                    // escape character
                     token_val = *src++;
-                    if (token_val == 'n') token_val = '\n';
+                    if (token_val == 'n') {
+                        token_val = '\n';
+                    }
                 }
                 if (token == '"') {
                     *data++ = token_val;
                 }
             }
-            ++src;
+            src++;
+            // if it is a single character, return Num token
             if (token == '"') {
                 token_val = (int)last_pos;
-            } else { // if it is a single character, set its token as Num
+            } else {
                 token = Num;
             }
             return;
         }
         else if (token == '/') {
-            if (*src == '/') { // skip comments, tinyc only support // comments
-                while (*src != 0 && *src != '\n') ++src;
+            if (*src == '/') {
+                // skip comments
+                while (*src != 0 && *src != '\n') {
+                    ++src;
+                }
             } else {
+                // divide operator
                 token = Div;
                 return;
             }
         }
         else if (token == '=') {
-            // parse '=' and '=='
+            // parse '==' and '='
             if (*src == '=') {
-                ++src;
+                src ++;
                 token = Eq;
             } else {
                 token = Assign;
@@ -153,7 +161,7 @@ void next() {
         else if (token == '+') {
             // parse '+' and '++'
             if (*src == '+') {
-                ++src;
+                src ++;
                 token = Inc;
             } else {
                 token = Add;
@@ -163,7 +171,7 @@ void next() {
         else if (token == '-') {
             // parse '-' and '--'
             if (*src == '-') {
-                ++src;
+                src ++;
                 token = Dec;
             } else {
                 token = Sub;
@@ -173,18 +181,18 @@ void next() {
         else if (token == '!') {
             // parse '!='
             if (*src == '=') {
-                ++src;
+                src++;
                 token = Ne;
             }
             return;
         }
         else if (token == '<') {
-            // parse '<=', '<<' and '<'
+            // parse '<=', '<<' or '<'
             if (*src == '=') {
-                ++src;
+                src ++;
                 token = Le;
             } else if (*src == '<') {
-                ++src;
+                src ++;
                 token = Shl;
             } else {
                 token = Lt;
@@ -192,12 +200,12 @@ void next() {
             return;
         }
         else if (token == '>') {
-            // parse '>=', '>>' and '>'
+            // parse '>=', '>>' or '>'
             if (*src == '=') {
-                ++src;
+                src ++;
                 token = Ge;
             } else if (*src == '>') {
-                ++src;
+                src ++;
                 token = Shr;
             } else {
                 token = Gt;
@@ -205,9 +213,9 @@ void next() {
             return;
         }
         else if (token == '|') {
-            // parse '|' and '||'
+            // parse '|' or '||'
             if (*src == '|') {
-                ++src;
+                src ++;
                 token = Lor;
             } else {
                 token = Or;
@@ -217,7 +225,7 @@ void next() {
         else if (token == '&') {
             // parse '&' and '&&'
             if (*src == '&') {
-                ++src;
+                src ++;
                 token = Lan;
             } else {
                 token = And;
@@ -245,7 +253,7 @@ void next() {
             return;
         }
         else if (token == '~' || token == ';' || token == '{' || token == '}' || token == '(' || token == ')' || token == ']' || token == ',' || token == ':') {
-            // return character as token directly
+            // directly return the character as token;
             return;
         }
     }
@@ -267,25 +275,26 @@ void program() {
 
 int eval() {
     int op, *tmp;
-    cycle = 0;
     while (1) {
-        cycle ++;
         op = *pc++; // get next operation code
 
-        if (op == IMM)       { ax = *pc++; }
-        else if (op == LC)   { ax = *(char *)ax; }
-        else if (op == LI)   { ax = *(int *)ax; }
-        else if (op == SC)   { ax = *(char *)*sp++ = ax; }
-        else if (op == SI)   { *(int *)*sp++ = ax; }
-        else if (op == PUSH) { *--sp = ax; }
-        else if (op == JMP)  { pc = (int *)*pc; }
-        else if (op == JZ)   { pc = ax ? pc + 1 : (int *)*pc; }
-        else if (op == JNZ)  { pc = ax ? (int *)*pc : pc + 1; }
-        else if (op == CALL) { *--sp = (int)(pc+1); pc = (int *)*pc; }
-        else if (op == ENT)  { *--sp = (int)bp; bp = sp; sp = sp - *pc++; }
-        else if (op == ADJ)  { sp = sp + *pc++; }
-        else if (op == LEV)  { sp = bp; bp = (int *)*sp++; pc = (int *)*sp++; }
-        else if (op == LEA)  { ax = (int)(bp + *pc++); }
+        if (op == IMM)       {ax = *pc++;}                                     // load immediate value to ax
+        else if (op == LC)   {ax = *(char *)ax;}                               // load character to ax, address in ax
+        else if (op == LI)   {ax = *(int *)ax;}                                // load integer to ax, address in ax
+        else if (op == SC)   {ax = *(char *)*sp++ = ax;}                       // save character to address, value in ax, address on stack
+        else if (op == SI)   {*(int *)*sp++ = ax;}                             // save integer to address, value in ax, address on stack
+        else if (op == PUSH) {*--sp = ax;}                                     // push the value of ax onto the stack
+        else if (op == JMP)  {pc = (int *)*pc;}                                // jump to the address
+        else if (op == JZ)   {pc = ax ? pc + 1 : (int *)*pc;}                   // jump if ax is zero
+        else if (op == JNZ)  {pc = ax ? (int *)*pc : pc + 1;}                   // jump if ax is zero
+        else if (op == CALL) {*--sp = (int)(pc+1); pc = (int *)*pc;}           // call subroutine
+        else if (op == ENT)  {*--sp = (int)bp; bp = sp; sp = sp - *pc++;}      // make new stack frame
+        else if (op == ADJ)  {sp = sp + *pc++;}                                // add esp, <size>
+        else if (op == LEV)  {sp = bp; bp = (int *)*sp++; pc = (int *)*sp++;}  // restore call frame and PC
+        else if (op == ENT)  {*--sp = (int)bp; bp = sp; sp = sp - *pc++;}      // make new stack frame
+        else if (op == ADJ)  {sp = sp + *pc++;}                                // add esp, <size>
+        else if (op == LEV)  {sp = bp; bp = (int *)*sp++; pc = (int *)*sp++;}  // restore call frame and PC
+        else if (op == LEA)  {ax = (int)(bp + *pc++);}                         // load address for arguments.
 
         else if (op == OR)  ax = *sp++ | ax;
         else if (op == XOR) ax = *sp++ ^ ax;
@@ -304,56 +313,69 @@ int eval() {
         else if (op == DIV) ax = *sp++ / ax;
         else if (op == MOD) ax = *sp++ % ax;
 
-        else if (op == EXIT) { printf("exit(%d)", *sp); return *sp; }
+
+        else if (op == EXIT) { printf("exit(%d)", *sp); return *sp;}
         else if (op == OPEN) { ax = open((char *)sp[1], sp[0]); }
-        else if (op == CLOS) { ax = close(*sp); }
+        else if (op == CLOS) { ax = close(*sp);}
         else if (op == READ) { ax = read(sp[2], (char *)sp[1], *sp); }
         else if (op == PRTF) { tmp = sp + pc[1]; ax = printf((char *)tmp[-1], tmp[-2], tmp[-3], tmp[-4], tmp[-5], tmp[-6]); }
-        else if (op == MALC) { ax = (int)malloc(*sp); }
-        else if (op == MSET) { ax = (int)memset((char *)sp[2], sp[1], *sp); }
-        else if (op == MCMP) { ax = memcmp((char *)sp[2], (char *)sp[1], *sp); }
-
-        else { printf("unknown instruction:%d\n", op); return -1; }
+        else if (op == MALC) { ax = (int)malloc(*sp);}
+        else if (op == MSET) { ax = (int)memset((char *)sp[2], sp[1], *sp);}
+        else if (op == MCMP) { ax = memcmp((char *)sp[2], (char *)sp[1], *sp);}
+        else {
+            printf("unknown instruction:%d\n", op);
+            return -1;
+        }
     }
+    return 0;
 }
 
 int main(int argc, char **argv) {
-    int fd; // file descriptor
-    int i;
+    int i, fd;
     int *tmp;
 
-    argc--; argv++;
+    argc--;
+    argv++;
+
     poolsize = 256 * 1024; // arbitrary size
     line = 1;
 
-    // allocate memory for text/data/stack
+    // allocate memory for virtual machine
     if (!(text = old_text = malloc(poolsize))) {
-        printf("could not malloc(%d) for code segment area\n", poolsize);
+        printf("could not malloc(%d) for text area\n", poolsize);
         return -1;
     }
     if (!(data = malloc(poolsize))) {
-        printf("could not malloc(%d) for data segment area\n", poolsize);
+        printf("could not malloc(%d) for data area\n", poolsize);
         return -1;
     }
     if (!(stack = malloc(poolsize))) {
         printf("could not malloc(%d) for stack area\n", poolsize);
         return -1;
     }
+    if (!(symbols = malloc(poolsize))) {
+        printf("could not malloc(%d) for symbol table\n", poolsize);
+        return -1;
+    }
+
     memset(text, 0, poolsize);
     memset(data, 0, poolsize);
     memset(stack, 0, poolsize);
-
-    // init vm registers
-    bp = sp = (int*)((int)stack + poolsize); // stack is initially empty, so they point to stack bottom(top)
+    memset(symbols, 0, poolsize);
+    bp = sp = (int *)((int)stack + poolsize);
     ax = 0;
 
-    // add keywords to symbol table
-    src = "char else enum if int return sizeof while open read close printf malloc memset memcmp exit void main"; 
+    src = "char else enum if int return sizeof while "
+          "open read close printf malloc memset memcmp exit void main";
+
+     // add keywords to symbol table
     i = Char;
     while (i <= While) {
         next();
-        current_id[Token]++;
+        current_id[Token] = i++;
     }
+
+    // add library to symbol table
     i = OPEN;
     while (i <= EXIT) {
         next();
@@ -361,14 +383,17 @@ int main(int argc, char **argv) {
         current_id[Type] = INT;
         current_id[Value] = i++;
     }
+
     next(); current_id[Token] = Char; // handle void type
     next(); idmain = current_id; // keep track of main
 
-    // read source codes
+
+    // read the source file
     if ((fd = open(*argv, 0)) < 0) {
         printf("could not open(%s)\n", *argv);
         return -1;
     }
+
     if (!(src = old_src = malloc(poolsize))) {
         printf("could not malloc(%d) for source area\n", poolsize);
         return -1;
@@ -377,19 +402,19 @@ int main(int argc, char **argv) {
         printf("read() returned %d\n", i);
         return -1;
     }
-    src[i] = 0; // terminate with 0
-    close(fd); // ignore possible error
+    src[i] = 0; // add EOF character
+    close(fd);
 
     program();
 
-    if (!(pc = (int*)idmain[Value])) {
+    if (!(pc = (int *)idmain[Value])) {
         printf("main() not defined\n");
         return -1;
     }
 
     // setup stack
-    sp = (int*)((int)stack + poolsize);
-    *--sp = EXIT;
+    sp = (int *)((int)stack + poolsize);
+    *--sp = EXIT; // call exit if main returns
     *--sp = PUSH; tmp = sp;
     *--sp = argc;
     *--sp = (int)argv;
