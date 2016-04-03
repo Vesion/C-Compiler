@@ -1,4 +1,7 @@
 #include <stdio.h>
+
+enum {a = 2, b};
+int i;
 int main(int argc, char **argv) {
     printf("hello word\n");
     return 0;
