@@ -9,7 +9,7 @@ int *pc, *sp, *bp, ax, cycle;
 - `pc` : program counter register, store the address of next instruction;
 - `sp` : stack pointer register, maintain the address of stack top, decrease while pushing stack;
 - `bp` : base pointer register, for function call usage;
-- `ax` : general register, store the result of one instruction;
+- `ax` : accumulator register, store the result of one instruction;
 - `cycle` : counter of instructions.
 
 

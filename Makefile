@@ -1,2 +1,2 @@
 all:
-	gcc -m32 tinyc.c -o tinyc
+	gcc -m32 xc.c -o xc
