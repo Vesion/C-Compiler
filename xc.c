@@ -25,6 +25,7 @@ int *pc, *sp, *bp, a, // vm registers
 
 // print and debug
 char *lp; int *le, src, debug;
+char *ins;
 
 // tokens and classes (operators last and in precedence order)
 enum {
@@ -64,9 +65,7 @@ void next()
                 printf("%d: %.*s", line, p - lp, lp);
                 lp = p;
                 while (le < e) {
-                    printf("%8.4s", &"LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,"
-                            "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
-                            "OPEN,READ,CLOS,PRTF,MALC,MSET,MCMP,EXIT,"[*++le * 5]);
+                    printf("%8.4s", &ins[*++le * 5]);
                     if (*le <= ADJ) printf(" %d\n", *++le); else printf("\n"); // instructions befoore ADJ all have operands
                 }
             }
@@ -295,19 +294,28 @@ void expr(int lev)
 
 void stmt()
 {
-    int *a, *b;
+    // 6 kinds of statements:
+    // 1. if (expr) <stmt> [else <stmt>]
+    // 2. while (expr) <stmt>
+    // 3. { <stmt> }
+    // 4. return expr;
+    // 5. <empty stmt>;
+    // 6. expr;
 
+    int *a, *b;
     if (tk == If) {
         next();
         if (tk == '(') next(); else { printf("%d: open paren expected\n", line); exit(-1); }
         expr(Assign);
         if (tk == ')') next(); else { printf("%d: close paren expected\n", line); exit(-1); }
-        *++e = BZ; b = ++e;
-        stmt();
+        *++e = BZ;  // if true (a != 0), branch pc+1, else (a == 0), branch *pc
+        b = ++e;
+        stmt(); // true branch
         if (tk == Else) {
-            *b = (int)(e + 3); *++e = JMP; b = ++e;
-            next();
-            stmt();
+            *b = (int)(e + 3);
+            *++e = JMP; 
+            b = ++e;
+            next(); stmt(); // else false branch
         }
         *b = (int)(e + 1);
     }
@@ -345,10 +353,10 @@ void stmt()
 
 int parse() {
     int bt, ty, i;
-    line = 0;
+    line = 1;
     next();
     while (tk) {
-        bt = INT; // base type
+        bt = INT; // base type, for pointer type
         if (tk == Int) next();
         else if (tk == Char) { next(); bt = CHAR; }
         
@@ -367,17 +375,17 @@ int parse() {
                         i = ival;
                         next();
                     }
-                    id[Class] = Num; id[Type] = INT; id[Val] = i++; // accumulate enum
+                    id[Class] = Num; id[Type] = INT; id[Val] = i++; // enum is integer, enumerate its value
                     if (tk == ',') next();
                 }
                 next();
             }
         }
         while (tk != ';' && tk != '}') {
-            ty = bt; // type
+            ty = bt; // real type
             while (tk == Mul) { next(); ty = ty + PTR; } // pointer type
-            if (tk != Id) { printf("%d: bad global declaration\n", line); exit(-1); }
-            if (id[Class]) { printf("%d: duplicate global definition\n", line); exit(-1); }
+            if (tk != Id) { printf("%d: bad global declaration\n", line); exit(-1); } // a identifier must follow a type name, like: int a;
+            if (id[Class]) { printf("%d: duplicate global definition\n", line); exit(-1); } // check symbol table in case duplicates
             next();
             id[Type] = ty;
 
@@ -453,10 +461,7 @@ int eval() {
     while (1) {
         i = *pc++; ++cycle;
         if (debug) {
-            printf("%d> %.4s", cycle,
-                    &"LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,"
-                    "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
-                    "OPEN,READ,CLOS,PRTF,MALC,MSET,MCMP,EXIT,"[i * 5]);
+            printf("%d> %.4s", cycle, &ins[i * 5]);
             if (i <= ADJ) printf(" %d\n", *pc); else printf("\n");
         }
         if      (i == LEA) a = (int)(bp + *pc++);                             // load local address
@@ -512,6 +517,9 @@ int main(int argc, char **argv)
     if (argc > 0 && **argv == '-' && (*argv)[1] == 's') { src = 1; --argc; ++argv; }
     if (argc > 0 && **argv == '-' && (*argv)[1] == 'd') { debug = 1; --argc; ++argv; }
     if (argc < 1) { printf("usage: xc [-s] [-d] file ...\n"); return -1; }
+    ins = "LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,"
+        "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
+        "OPEN,READ,CLOS,PRTF,MALC,MSET,MCMP,EXIT,";
 
     if ((fd = open(*argv, 0)) < 0) { printf("could not open(%s)\n", *argv); return -1; }
 

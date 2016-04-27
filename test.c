@@ -1,5 +1,12 @@
 #include <stdio.h>
 char g1, *g2;
-enum {e};
+enum {e = 1};
 char f(char* a) { return *a; }
-int main() { printf("hello world\n"); g1 = 1; g2 = &g1; f(g2); return 0; }
+int main() { 
+    int a;
+    if (0) {  99; }
+    else {100;}
+    a = 3;
+    return 0; 
+}
+
