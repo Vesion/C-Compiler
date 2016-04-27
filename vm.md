@@ -1,15 +1,17 @@
-# VM Spec of tinyc
+# VM Specification
+
+A one-register [stack machine](https://en.wikipedia.org/wiki/Stack_machine) with accumulator is used in xc.
 
 ###Registers
 
 ```c
-int *pc, *sp, *bp, ax, cycle;
+int *pc, *sp, *bp, a, cycle;
 ```
 
-- `pc` : program counter register, store the address of next instruction;
+- `pc` : program counter register, store next instruction;
 - `sp` : stack pointer register, maintain the address of stack top, decrease while pushing stack;
-- `bp` : base pointer register, for function call usage;
-- `ax` : accumulator register, store the result of one instruction;
+- `bp` : base (or frame) pointer register, for calling function;
+- `a` : accumulator register;
 - `cycle` : counter of instructions.
 
 
@@ -17,40 +19,40 @@ int *pc, *sp, *bp, ax, cycle;
 ###Instructions
 
 ```c
-enum {
-    LEA, IMM, JMP, CALL, JZ, JNZ, ENT, ADJ, LEV, LI, LC, SI, SC, PUSH,
-    OR, XOR, AND, EQ, NE, LT, GT, LE, GE, SHL, SHR, ADD, SUB, MUL, DIV, MOD,
-    OPEN, READ, CLOS, PRTF, MALC, MSET, MCMP, EXIT
+enum { 
+  LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,
+  OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,
+  OPEN,READ,CLOS,PRTF,MALC,MSET,MCMP,EXIT 
 };
 ```
 
-* `IMM` : load immediate value to `ax` from `pc`, then `pc` point to next instruction;
+* `LEA` : load local variable's address into `a`;
 
-* `LC` : load character value to `ax` from address in `ax`;
+* `IMM` : load global address or immediate intoto `a` from `pc`, then advance `pc`;
 
-* `LI` : load integer value to `ax` from address in `ax`;
+* `JMP` : jump to `*pc` unconditionally;
 
-* `SC` : let address in `sp` save character value of `ax`, then pop stack;
+* `JSR` : jump to subroutine, push `pc+1` onto stack, then jump to `*pc` unconditionally;
 
-* `SI` : let address in `sp` save integer value of `ax`, then pop stack;
+* `BZ` : branch if zero, if `a` is zero, jump tp `*pc`, otherwise jumo to `pc+1`;
 
-* `PUSH` : push the value of `ax` onto stack;
-
-* `JMP` : advance `pc`, jump to next address unconditionally;
-
-* `JZ` : jump if `ax` is zero;
-
-* `JNZ` : jump if `ax` is not zero;
-
-* `CALL` : call subroutine, push callee address(`pc+1`) onto stack for return;
+* `BNZ` : branch if not zero, if `a` is not zero, jump tp `*pc`, otherwise jumo to `pc+1`;
 
 * `ENT` : enter subroutine, push `bp` onto stack, then make new call frame for parameters and inner automatic variables;
 
-* `ADJ` : remove call frame; (poor `ADD`)
+* `ADJ` : adjust stack, remove frame arguments (when leave subroutine);
 
-* `LEV` : return to callee address; (lack of `POP`)
+* `LEV` : leave subroutine, unwind `sp` to `bp` (callee) address;
 
-* `LEA` : load arguments to ax; (poor `ADD`)
+* `LC` : load character value to `a` from address in `a`;
+
+* `LI` : load integer value to `a` from address in `a`;
+
+* `SC` : store character value, `*sp=a`, then pop stack;
+
+* `SI` : store integer value, `*sp=a`, then pop stack;
+
+* `PSH` : push the value of `a` onto stack;
 
   ​
 

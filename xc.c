@@ -34,6 +34,7 @@ enum {
 };
 
 // instructions
+// write in the same width(5) format, for -s and -d
 enum { LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,
     OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,
     OPEN,READ,CLOS,PRTF,MALC,MSET,MCMP,EXIT };
@@ -42,7 +43,15 @@ enum { LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,
 enum { CHAR, INT, PTR };
 
 // identifier offsets
+// we do not support struct, so use memory block (table), Idsz is the size of table
+// Tk:    identifier(Id), keywords(char, else, enum...)
+// Hash:  *calculate with Tk*
+// Name:  identifier's name
+// Class: number, function, system call, global, local
+// Type:  char, int, pointer
+// Val:   identifier's value
 enum { Tk, Hash, Name, Class, Type, Val, HClass, HType, HVal, Idsz };
+
 
 void next()
 {
@@ -51,84 +60,87 @@ void next()
     while ((tk = *p)) {
         ++p;
         if (tk == '\n') {
-            if (src) {
+            if (src) { // print source and IR
                 printf("%d: %.*s", line, p - lp, lp);
                 lp = p;
                 while (le < e) {
                     printf("%8.4s", &"LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,"
                             "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
                             "OPEN,READ,CLOS,PRTF,MALC,MSET,MCMP,EXIT,"[*++le * 5]);
-                    if (*le <= ADJ) printf(" %d\n", *++le); else printf("\n");
+                    if (*le <= ADJ) printf(" %d\n", *++le); else printf("\n"); // instructions befoore ADJ all have operands
                 }
             }
             ++line;
         }
-        else if (tk == '#') {
+        else if (tk == '#') { // ignore all includes and macros
             while (*p != 0 && *p != '\n') ++p;
         }
-        else if ((tk >= 'a' && tk <= 'z') || (tk >= 'A' && tk <= 'Z') || tk == '_') {
-            pp = p - 1;
+        else if ((tk >= 'a' && tk <= 'z') || (tk >= 'A' && tk <= 'Z') || tk == '_') { // identifier
+            pp = p - 1; // pp point to the first character
             while ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_')
                 tk = tk * 147 + *p++;
-            tk = (tk << 6) + (p - pp);
+            tk = (tk << 6) + (p - pp); // calculate hash
             id = sym;
-            while (id[Tk]) {
-                if (tk == id[Hash] && !memcmp((char *)id[Name], pp, p - pp)) { tk = id[Tk]; return; }
+            while (id[Tk]) { // scan the whole symbol table to check if it has appeared
+                if (tk == id[Hash] && !memcmp((char *)id[Name], pp, p - pp)) { tk = id[Tk]; return; } // if found, use it
                 id = id + Idsz;
             }
-            id[Name] = (int)pp;
+            // this is a new one
+            id[Name] = (int)pp; // its name is address of the first character
             id[Hash] = tk;
-            tk = id[Tk] = Id;
+            tk = id[Tk] = Id; // it is a identifier, keywords will be reassigned
             return;
         }
-        else if (tk >= '0' && tk <= '9') {
-            if ((ival = tk - '0')) { while (*p >= '0' && *p <= '9') ival = ival * 10 + *p++ - '0'; }
-            else if (*p == 'x' || *p == 'X') {
+        else if (tk >= '0' && tk <= '9') { // number literal
+            if ((ival = tk - '0')) { while (*p >= '0' && *p <= '9') ival = ival * 10 + *p++ - '0'; } // decimal
+            else if (*p == 'x' || *p == 'X') { // begin with 0x, hex
                 while ((tk = *++p) && ((tk >= '0' && tk <= '9') || (tk >= 'a' && tk <= 'f') || (tk >= 'A' && tk <= 'F')))
-                    ival = ival * 16 + (tk & 15) + (tk >= 'A' ? 9 : 0);
+                    ival = ival * 16 + (tk & 15) + (tk >= 'A' ? 9 : 0); // ascii trick
             }
-            else { while (*p >= '0' && *p <= '7') ival = ival * 8 + *p++ - '0'; }
+            else { while (*p >= '0' && *p <= '7') ival = ival * 8 + *p++ - '0'; } // begin with 0, oct
             tk = Num;
             return;
         }
         else if (tk == '/') {
-            if (*p == '/') {
+            if (*p == '/') { // begin with //, comment
                 ++p;
                 while (*p != 0 && *p != '\n') ++p;
             }
-            else {
+            else { // division sign
                 tk = Div;
                 return;
             }
         }
-        else if (tk == '\'' || tk == '"') {
+        else if (tk == '\'' || tk == '"') { // begin with ' or "
             pp = data;
-            while (*p != 0 && *p != tk) {
+            while (*p != 0 && *p != tk) { // read until close quote
                 if ((ival = *p++) == '\\') {
-                    if ((ival = *p++) == 'n') ival = '\n';
+                    if ((ival = *p++) == 'n') ival = '\n'; // escape \n
                 }
-                if (tk == '"') *data++ = ival;
+                if (tk == '"') *data++ = ival; // string literal, copy into data character by character
             }
             ++p;
-            if (tk == '"') ival = (int)pp; else tk = Num;
+            if (tk == '"') ival = (int)pp; // string literal, ival is address of the first character
+            else tk = Num; // charater literal, treat as number
             return;
         }
-        else if (tk == '=') { if (*p == '=') { ++p; tk = Eq; } else tk = Assign; return; }
-        else if (tk == '+') { if (*p == '+') { ++p; tk = Inc; } else tk = Add; return; }
-        else if (tk == '-') { if (*p == '-') { ++p; tk = Dec; } else tk = Sub; return; }
-        else if (tk == '!') { if (*p == '=') { ++p; tk = Ne; } return; }
-        else if (tk == '<') { if (*p == '=') { ++p; tk = Le; } else if (*p == '<') { ++p; tk = Shl; } else tk = Lt; return; }
-        else if (tk == '>') { if (*p == '=') { ++p; tk = Ge; } else if (*p == '>') { ++p; tk = Shr; } else tk = Gt; return; }
-        else if (tk == '|') { if (*p == '|') { ++p; tk = Lor; } else tk = Or; return; }
-        else if (tk == '&') { if (*p == '&') { ++p; tk = Lan; } else tk = And; return; }
-        else if (tk == '^') { tk = Xor; return; }
-        else if (tk == '%') { tk = Mod; return; }
-        else if (tk == '*') { tk = Mul; return; }
-        else if (tk == '[') { tk = Brak; return; }
-        else if (tk == '?') { tk = Cond; return; }
-        else if (tk == '~' || tk == ';' || tk == '{' || tk == '}' || tk == '(' || tk == ')' || tk == ']' || tk == ',' || tk == ':') return;
+        else if (tk == '=') { if (*p == '=') { ++p; tk = Eq; } else tk = Assign; return; } // equal, assign
+        else if (tk == '+') { if (*p == '+') { ++p; tk = Inc; } else tk = Add; return; } // add, increase
+        else if (tk == '-') { if (*p == '-') { ++p; tk = Dec; } else tk = Sub; return; } // subtract, decrease
+        else if (tk == '!') { if (*p == '=') { ++p; tk = Ne; } return; } // not equal
+        else if (tk == '<') { if (*p == '=') { ++p; tk = Le; } else if (*p == '<') { ++p; tk = Shl; } else tk = Lt; return; } // less, less or equal, left shift
+        else if (tk == '>') { if (*p == '=') { ++p; tk = Ge; } else if (*p == '>') { ++p; tk = Shr; } else tk = Gt; return; } // greater, greater or equal, right shift
+        else if (tk == '|') { if (*p == '|') { ++p; tk = Lor; } else tk = Or; return; } // logical or, or
+        else if (tk == '&') { if (*p == '&') { ++p; tk = Lan; } else tk = And; return; } // logical and, and
+        else if (tk == '^') { tk = Xor; return; } // xor
+        else if (tk == '%') { tk = Mod; return; } // mod
+        else if (tk == '*') { tk = Mul; return; } // multiply
+        else if (tk == '[') { tk = Brak; return; } // subscript
+        else if (tk == '?') { tk = Cond; return; } // ternary condition expression (? :)
+        else if (tk == '~' || tk == ';' || tk == '{' || tk == '}' || tk == '(' || tk == ')' || tk == ']' || tk == ',' || tk == ':') return; // treat these as themselves
     }
 }
+
 
 void expr(int lev)
 {
@@ -280,6 +292,7 @@ void expr(int lev)
     }
 }
 
+
 void stmt()
 {
     int *a, *b;
@@ -329,56 +342,60 @@ void stmt()
     }
 }
 
+
 int parse() {
     int bt, ty, i;
-    line = 1;
+    line = 0;
     next();
     while (tk) {
-        bt = INT; // basetype
+        bt = INT; // base type
         if (tk == Int) next();
         else if (tk == Char) { next(); bt = CHAR; }
-        else if (tk == Enum) {
+        
+        else if (tk == Enum) { // enum definition
             next();
-            if (tk != '{') next();
+            if (tk != '{') next(); // ignore enum name
             if (tk == '{') {
                 next();
-                i = 0;
+                i = 0; // enum starts from default 0
                 while (tk != '}') {
                     if (tk != Id) { printf("%d: bad enum identifier %d\n", line, tk); exit(-1); }
                     next();
-                    if (tk == Assign) {
+                    if (tk == Assign) { // if assign manually
                         next();
                         if (tk != Num) { printf("%d: bad enum initializer\n", line); exit(-1); }
                         i = ival;
                         next();
                     }
-                    id[Class] = Num; id[Type] = INT; id[Val] = i++;
+                    id[Class] = Num; id[Type] = INT; id[Val] = i++; // accumulate enum
                     if (tk == ',') next();
                 }
                 next();
             }
         }
         while (tk != ';' && tk != '}') {
-            ty = bt;
-            while (tk == Mul) { next(); ty = ty + PTR; }
+            ty = bt; // type
+            while (tk == Mul) { next(); ty = ty + PTR; } // pointer type
             if (tk != Id) { printf("%d: bad global declaration\n", line); exit(-1); }
             if (id[Class]) { printf("%d: duplicate global definition\n", line); exit(-1); }
             next();
             id[Type] = ty;
-            if (tk == '(') { // function
+
+            if (tk == '(') { // function definition
                 id[Class] = Fun;
-                id[Val] = (int)(e + 1);
+                id[Val] = (int)(e + 1); // function's val is body's first instruction
                 next(); i = 0;
-                while (tk != ')') {
+                while (tk != ')') { // parameters
                     ty = INT;
                     if (tk == Int) next();
                     else if (tk == Char) { next(); ty = CHAR; }
                     while (tk == Mul) { next(); ty = ty + PTR; }
                     if (tk != Id) { printf("%d: bad parameter declaration\n", line); exit(-1); }
                     if (id[Class] == Loc) { printf("%d: duplicate parameter definition\n", line); exit(-1); }
+                    // parameters are alse locals, so use local context, backup
                     id[HClass] = id[Class]; id[Class] = Loc;
                     id[HType]  = id[Type];  id[Type] = ty;
-                    id[HVal]   = id[Val];   id[Val] = i++;
+                    id[HVal]   = id[Val];   id[Val] = i++; // local offset
                     next();
                     if (tk == ',') next();
                 }
@@ -386,7 +403,7 @@ int parse() {
                 if (tk != '{') { printf("%d: bad function definition\n", line); exit(-1); }
                 loc = ++i;
                 next();
-                while (tk == Int || tk == Char) {
+                while (tk == Int || tk == Char) { // local variables
                     bt = (tk == Int) ? INT : CHAR;
                     next();
                     while (tk != ';') {
@@ -394,17 +411,19 @@ int parse() {
                         while (tk == Mul) { next(); ty = ty + PTR; }
                         if (tk != Id) { printf("%d: bad local declaration\n", line); exit(-1); }
                         if (id[Class] == Loc) { printf("%d: duplicate local definition\n", line); exit(-1); }
+                        // enter local context, backup
                         id[HClass] = id[Class]; id[Class] = Loc;
                         id[HType]  = id[Type];  id[Type] = ty;
-                        id[HVal]   = id[Val];   id[Val] = ++i;
+                        id[HVal]   = id[Val];   id[Val] = ++i; // local offset
                         next();
                         if (tk == ',') next();
                     }
                     next();
                 }
-                *++e = ENT; *++e = i - loc;
-                while (tk != '}') stmt();
-                *++e = LEV;
+                *++e = ENT; // first instruction is entering body
+                *++e = i - loc; // amount of all locals
+                while (tk != '}') stmt(); // function body
+                *++e = LEV; // leave body
                 id = sym; // unwind symbol table locals
                 while (id[Tk]) {
                     if (id[Class] == Loc) {
@@ -415,7 +434,7 @@ int parse() {
                     id = id + Idsz;
                 }
             }
-            else {
+            else { // not enum and function
                 id[Class] = Glo;
                 id[Val] = (int)data;
                 data = data + sizeof(int);
@@ -426,6 +445,7 @@ int parse() {
     }
     return 0;
 }
+
 
 int eval() {
     int i, *t;
@@ -483,6 +503,7 @@ int eval() {
     }
 }
 
+
 int main(int argc, char **argv)
 {
     int i, *t; // temps
@@ -490,7 +511,7 @@ int main(int argc, char **argv)
     --argc; ++argv;
     if (argc > 0 && **argv == '-' && (*argv)[1] == 's') { src = 1; --argc; ++argv; }
     if (argc > 0 && **argv == '-' && (*argv)[1] == 'd') { debug = 1; --argc; ++argv; }
-    if (argc < 1) { printf("usage: c4 [-s] [-d] file ...\n"); return -1; }
+    if (argc < 1) { printf("usage: xc [-s] [-d] file ...\n"); return -1; }
 
     if ((fd = open(*argv, 0)) < 0) { printf("could not open(%s)\n", *argv); return -1; }
 
@@ -513,7 +534,7 @@ int main(int argc, char **argv)
 
     if (!(lp = p = malloc(poolsz))) { printf("could not malloc(%d) source area\n", poolsz); return -1; }
     if ((i = read(fd, p, poolsz-1)) <= 0) { printf("read() returned %d\n", i); return -1; }
-    p[i] = 0;
+    p[i] = 0; // let source ends up with \0
     close(fd);
 
     // parse declarations

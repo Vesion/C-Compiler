@@ -1,5 +1,5 @@
 #include <stdio.h>
-int g1, *g2;
+char g1, *g2;
 enum {e};
-char f(int* a) { return '0'; }
-int main() { printf("hello world\n"); return 0; }
+char f(char* a) { return *a; }
+int main() { printf("hello world\n"); g1 = 1; g2 = &g1; f(g2); return 0; }
