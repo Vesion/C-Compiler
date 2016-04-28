@@ -61,12 +61,11 @@ void next()
     while ((tk = *p)) {
         ++p;
         if (tk == '\n') {
-            if (src) { // print source and IR
-                printf("%d: %.*s", line, p - lp, lp);
-                lp = p;
-                while (le < e) {
+            if (src) {
+                printf("%d: %.*s", line, (int)(p - lp), lp); lp = p; // print source
+                while (le < e) { // print IR
                     printf("%8.4s", &ins[*++le * 5]);
-                    if (*le <= ADJ) printf(" %d\n", *++le); else printf("\n"); // instructions befoore ADJ all have operands
+                    if (*le <= ADJ) printf(" %d\n", *++le); else printf("\n"); // instructions befoore ADJ have one operand, but here prints not-yet-assigned operand
                 }
             }
             ++line;
@@ -297,13 +296,21 @@ void stmt()
     // 6 kinds of statements:
     // 1. if (expr) <stmt> [else <stmt>]
     // 2. while (expr) <stmt>
-    // 3. { <stmt> }
-    // 4. return expr;
+    // 3. return expr;
+    // 4. { <stmt> }
     // 5. <empty stmt>;
     // 6. expr;
 
     int *a, *b;
     if (tk == If) {
+        //   if (expr)             expr(Assgin)
+        //                       BZ  next or X
+        //      { <stmt> }       stmt()
+        //   else                  JMP Y
+        // X:   
+        //      { <stmt> }       stmt()
+        // Y:
+        //
         next();
         if (tk == '(') next(); else { printf("%d: open paren expected\n", line); exit(-1); }
         expr(Assign);
@@ -312,14 +319,22 @@ void stmt()
         b = ++e;
         stmt(); // true branch
         if (tk == Else) {
-            *b = (int)(e + 3);
-            *++e = JMP; 
+            *b = (int)(e + 3); // e+3 is the first address in else block
+            *++e = JMP; // after true branch finished, jump out of if-else unconditionally
             b = ++e;
-            next(); stmt(); // else false branch
+            next(); stmt(); // false branch
         }
         *b = (int)(e + 1);
+        // e: BZ  X  <stmt>  JMP  Y  <X:stmt>  <Y:...>
     }
     else if (tk == While) {
+        // X:                     
+        //   while (expr)       expr(Assign) 
+        //                      BZ Y
+        //   <statement>        stmt()
+        //                      JMP X
+        // Y:                    
+        //
         next();
         a = e + 1;
         if (tk == '(') next(); else { printf("%d: open paren expected\n", line); exit(-1); }
@@ -336,15 +351,15 @@ void stmt()
         *++e = LEV;
         if (tk == ';') next(); else { printf("%d: semicolon expected\n", line); exit(-1); }
     }
-    else if (tk == '{') {
+    else if (tk == '{') { // { <stmt> }
         next();
         while (tk != '}') stmt();
         next();
     }
-    else if (tk == ';') {
+    else if (tk == ';') { // ;
         next();
     }
-    else {
+    else { // expression;
         expr(Assign);
         if (tk == ';') next(); else { printf("%d: semicolon expected\n", line); exit(-1); }
     }
@@ -462,7 +477,7 @@ int eval() {
         i = *pc++; ++cycle;
         if (debug) {
             printf("%d> %.4s", cycle, &ins[i * 5]);
-            if (i <= ADJ) printf(" %d\n", *pc); else printf("\n");
+            if (i <= ADJ) printf(" %d\n", *pc); else printf("\n"); // instructions before ADJ have one operand
         }
         if      (i == LEA) a = (int)(bp + *pc++);                             // load local address
         else if (i == IMM) a = *pc++;                                         // load global address or immediate

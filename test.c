@@ -4,9 +4,9 @@ enum {e = 1};
 char f(char* a) { return *a; }
 int main() { 
     int a;
-    if (0) {  99; }
-    else {100;}
-    a = 3;
+    a = 0;
+    if (a)  99;
+    else  100;
     return 0; 
 }
 
