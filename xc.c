@@ -10,22 +10,21 @@ int fd,       // file descriptor
 
 char *p;      // read source code
 char *data;   // global and static data segment
-int *e;       // generated code segment
+int *e;       // emitted code segment
 
 int *id,      // currently parsed identifier
     *sym,     // symbol table
     tk,       // current token
     ival,     // current token value
     ty,       // current expression type
-    loc,      // local variable offset
-    line;     // current line number
+    loc;      // local variable offset
 
 int *pc, *sp, *bp, a, // vm registers
     cycle; // instructions counter
 
 // print and debug
-char *lp; int *le, src, debug;
-char *ins;
+int line, *le, src, debug;
+char *lp, *ins;
 
 // tokens and classes (operators last and in precedence order)
 enum {
@@ -35,7 +34,6 @@ enum {
 };
 
 // instructions
-// write in the same width(5) format, for -s and -d
 enum { LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,
     OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,
     OPEN,READ,CLOS,PRTF,MALC,MSET,MCMP,EXIT };
@@ -43,7 +41,7 @@ enum { LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,
 // types
 enum { CHAR, INT, PTR };
 
-// identifier offsets
+// identifier fields
 // we do not support struct, so use memory block (table), Idsz is the size of table
 // Tk:    identifier(Id), keywords(char, else, enum...)
 // Hash:  *calculate with Tk*
@@ -140,18 +138,19 @@ void next()
 }
 
 
-void expr(int lev)
+void expr(int lev) // operator precedence
 {
     int t, *d;
 
     if (!tk) { printf("%d: unexpected eof in expression\n", line); exit(-1); }
-    else if (tk == Num) { *++e = IMM; *++e = ival; next(); ty = INT; }
-    else if (tk == '"') {
+    else if (tk == Num) { *++e = IMM; *++e = ival; next(); ty = INT; } // integer literal
+    else if (tk == '"') { // string literal
         *++e = IMM; *++e = ival; next();
-        while (tk == '"') next();
-        data = (char *)((int)data + sizeof(int) & -sizeof(int)); ty = PTR;
+        while (tk == '"') next(); // multi-lines C style string
+        data = (char *)((int)data + sizeof(int) & -sizeof(int)); // memory alignment with 4 bytes, like #program pack(4)
+        ty = PTR;
     }
-    else if (tk == Sizeof) {
+    else if (tk == Sizeof) { // sizeof(char|int|pointer)
         next(); if (tk == '(') next(); else { printf("%d: open paren expected in sizeof\n", line); exit(-1); }
         ty = INT; if (tk == Int) next(); else if (tk == Char) { next(); ty = CHAR; }
         while (tk == Mul) { next(); ty = ty + PTR; }
@@ -159,79 +158,87 @@ void expr(int lev)
         *++e = IMM; *++e = (ty == CHAR) ? sizeof(char) : sizeof(int);
         ty = INT;
     }
-    else if (tk == Id) {
-        d = id; next();
-        if (tk == '(') {
+    else if (tk == Id) { // identifier
+        d = id; next(); // id will advance in next(), so backup with d
+        if (tk == '(') { // function dispatch
             next();
-            t = 0;
-            while (tk != ')') { expr(Assign); *++e = PSH; ++t; if (tk == ',') next(); }
+            t = 0; // number of arguments
+            while (tk != ')') { expr(Assign); *++e = PSH; ++t; if (tk == ',') next(); } // evaluate each arguments, push them
             next();
-            if (d[Class] == Sys) *++e = d[Val];
-            else if (d[Class] == Fun) { *++e = JSR; *++e = d[Val]; }
+            if (d[Class] == Sys) *++e = d[Val]; // system call, like printf, memset
+            else if (d[Class] == Fun) { *++e = JSR; *++e = d[Val]; } // user defined function, jump into it, id[Val] is its first instruction
             else { printf("%d: bad function call\n", line); exit(-1); }
-            if (t) { *++e = ADJ; *++e = t; }
+            if (t) { *++e = ADJ; *++e = t; } // leave function, need to adjust stack
             ty = d[Type];
         }
-        else if (d[Class] == Num) { *++e = IMM; *++e = d[Val]; ty = INT; }
-        else {
-            if (d[Class] == Loc) { *++e = LEA; *++e = loc - d[Val]; }
-            else if (d[Class] == Glo) { *++e = IMM; *++e = d[Val]; }
+        else if (d[Class] == Num) { *++e = IMM; *++e = d[Val]; ty = INT; } // enum, only enum's Class is Num
+        else { // variable
+            if (d[Class] == Loc) { *++e = LEA; *++e = loc - d[Val]; } // load local address, its address is id[Val]-loc
+            else if (d[Class] == Glo) { *++e = IMM; *++e = d[Val]; } // load global address, its address is id[Val]
             else { printf("%d: undefined variable\n", line); exit(-1); }
-            *++e = ((ty = d[Type]) == CHAR) ? LC : LI;
+            *++e = ((ty = d[Type]) == CHAR) ? LC : LI; // load value from address, rvalue
         }
     }
     else if (tk == '(') {
         next();
-        if (tk == Int || tk == Char) {
+        if (tk == Int || tk == Char) { // explicit type cast
             t = (tk == Int) ? INT : CHAR; next();
             while (tk == Mul) { next(); t = t + PTR; }
             if (tk == ')') next(); else { printf("%d: bad cast\n", line); exit(-1); }
-            expr(Inc);
+            expr(Inc); // expr in () is high precedence, same below
             ty = t;
         }
-        else {
+        else { // (expr)
             expr(Assign);
             if (tk == ')') next(); else { printf("%d: close paren expected\n", line); exit(-1); }
         }
     }
-    else if (tk == Mul) {
+    else if (tk == Mul) { // dereference
         next(); expr(Inc);
         if (ty > INT) ty = ty - PTR; else { printf("%d: bad dereference\n", line); exit(-1); }
         *++e = (ty == CHAR) ? LC : LI;
     }
-    else if (tk == And) {
+    else if (tk == And) { // get address
         next(); expr(Inc);
-        if (*e == LC || *e == LI) --e; else { printf("%d: bad address-of\n", line); exit(-1); }
+        if (*e == LC || *e == LI) --e;  // according to dereference, remove LC/LI
+        else { printf("%d: bad address-of\n", line); exit(-1); }
         ty = ty + PTR;
     }
-    else if (tk == '!') { next(); expr(Inc); *++e = PSH; *++e = IMM; *++e = 0; *++e = EQ; ty = INT; }
-    else if (tk == '~') { next(); expr(Inc); *++e = PSH; *++e = IMM; *++e = -1; *++e = XOR; ty = INT; }
-    else if (tk == Add) { next(); expr(Inc); ty = INT; }
-    else if (tk == Sub) {
+    else if (tk == '!') { next(); expr(Inc); *++e = PSH; *++e = IMM; *++e = 0; *++e = EQ; ty = INT; } // !expr --> expr == 0
+    else if (tk == '~') { next(); expr(Inc); *++e = PSH; *++e = IMM; *++e = -1; *++e = XOR; ty = INT; } // ~expr --> expr ^ -1
+    else if (tk == Add) { next(); expr(Inc); ty = INT; } // +expr
+    else if (tk == Sub) { // -expr --> 0-expr
         next(); *++e = IMM;
         if (tk == Num) { *++e = -ival; next(); } else { *++e = -1; *++e = PSH; expr(Inc); *++e = MUL; }
         ty = INT;
     }
-    else if (tk == Inc || tk == Dec) {
+    else if (tk == Inc || tk == Dec) { // ++expr, --expr
         t = tk; next(); expr(Inc);
-        if (*e == LC) { *e = PSH; *++e = LC; }
-        else if (*e == LI) { *e = PSH; *++e = LI; }
+        if (*e == LC) { *e = PSH; *++e = LC; } else if (*e == LI) { *e = PSH; *++e = LI; } // push address
         else { printf("%d: bad lvalue in pre-increment\n", line); exit(-1); }
-        *++e = PSH;
-        *++e = IMM; *++e = (ty > PTR) ? sizeof(int) : sizeof(char);
+        *++e = PSH; // push value
+        *++e = IMM; *++e = (ty > PTR) ? sizeof(int) : sizeof(char); // pointer type, increase/decrease address
         *++e = (t == Inc) ? ADD : SUB;
-        *++e = (ty == CHAR) ? SC : SI;
+        *++e = (ty == CHAR) ? SC : SI; // store value
     }
     else { printf("%d: bad expression\n", line); exit(-1); }
 
     while (tk >= lev) { // "precedence climbing" or "Top Down Operator Precedence" method
-        t = ty;
-        if (tk == Assign) {
+        t = ty; // backup
+        if (tk == Assign) { // expr = expr
             next();
-            if (*e == LC || *e == LI) *e = PSH; else { printf("%d: bad lvalue in assignment\n", line); exit(-1); }
-            expr(Assign); *++e = ((ty = t) == CHAR) ? SC : SI;
+            // a big trick here:
+            // source: 
+            //      x = 1;
+            // IR:
+            //      LEA LI              // when read x, treat as rvalue
+            //      LEA PSH             // when read =, treat as lvalue, erase LI, replace with PSH
+            //      LEA PSH IMM(1) SI   // store 1 into x
+            if (*e == LC || *e == LI) *e = PSH;
+            else { printf("%d: bad lvalue in assignment\n", line); exit(-1); }
+            expr(Assign); *++e = ((ty = t) == CHAR) ? SC : SI; // evaluate rvalue and assign lvalue
         }
-        else if (tk == Cond) {
+        else if (tk == Cond) { // a?:b:c, similar to if-else
             next();
             *++e = BZ; d = ++e;
             expr(Assign);
@@ -240,34 +247,34 @@ void expr(int lev)
             expr(Cond);
             *d = (int)(e + 1);
         }
-        else if (tk == Lor) { next(); *++e = BNZ; d = ++e; expr(Lan); *d = (int)(e + 1); ty = INT; }
-        else if (tk == Lan) { next(); *++e = BZ;  d = ++e; expr(Or);  *d = (int)(e + 1); ty = INT; }
-        else if (tk == Or)  { next(); *++e = PSH; expr(Xor); *++e = OR;  ty = INT; }
-        else if (tk == Xor) { next(); *++e = PSH; expr(And); *++e = XOR; ty = INT; }
-        else if (tk == And) { next(); *++e = PSH; expr(Eq);  *++e = AND; ty = INT; }
-        else if (tk == Eq)  { next(); *++e = PSH; expr(Lt);  *++e = EQ;  ty = INT; }
-        else if (tk == Ne)  { next(); *++e = PSH; expr(Lt);  *++e = NE;  ty = INT; }
-        else if (tk == Lt)  { next(); *++e = PSH; expr(Shl); *++e = LT;  ty = INT; }
-        else if (tk == Gt)  { next(); *++e = PSH; expr(Shl); *++e = GT;  ty = INT; }
-        else if (tk == Le)  { next(); *++e = PSH; expr(Shl); *++e = LE;  ty = INT; }
-        else if (tk == Ge)  { next(); *++e = PSH; expr(Shl); *++e = GE;  ty = INT; }
-        else if (tk == Shl) { next(); *++e = PSH; expr(Add); *++e = SHL; ty = INT; }
-        else if (tk == Shr) { next(); *++e = PSH; expr(Add); *++e = SHR; ty = INT; }
-        else if (tk == Add) {
+        else if (tk == Lor) { next(); *++e = BNZ; d = ++e; expr(Lan); *d = (int)(e + 1); ty = INT; } // ||
+        else if (tk == Lan) { next(); *++e = BZ;  d = ++e; expr(Or);  *d = (int)(e + 1); ty = INT; } // &&
+        else if (tk == Or)  { next(); *++e = PSH; expr(Xor); *++e = OR;  ty = INT; } // |
+        else if (tk == Xor) { next(); *++e = PSH; expr(And); *++e = XOR; ty = INT; } // ^
+        else if (tk == And) { next(); *++e = PSH; expr(Eq);  *++e = AND; ty = INT; } // &
+        else if (tk == Eq)  { next(); *++e = PSH; expr(Lt);  *++e = EQ;  ty = INT; } // ==
+        else if (tk == Ne)  { next(); *++e = PSH; expr(Lt);  *++e = NE;  ty = INT; } // !=
+        else if (tk == Lt)  { next(); *++e = PSH; expr(Shl); *++e = LT;  ty = INT; } // <
+        else if (tk == Gt)  { next(); *++e = PSH; expr(Shl); *++e = GT;  ty = INT; } // >
+        else if (tk == Le)  { next(); *++e = PSH; expr(Shl); *++e = LE;  ty = INT; } // <=
+        else if (tk == Ge)  { next(); *++e = PSH; expr(Shl); *++e = GE;  ty = INT; } // >=
+        else if (tk == Shl) { next(); *++e = PSH; expr(Add); *++e = SHL; ty = INT; } // <<
+        else if (tk == Shr) { next(); *++e = PSH; expr(Add); *++e = SHR; ty = INT; } // >>
+        else if (tk == Add) { // a+b
             next(); *++e = PSH; expr(Mul);
             if ((ty = t) > PTR) { *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = MUL;  }
             *++e = ADD;
         }
-        else if (tk == Sub) {
+        else if (tk == Sub) { // a-b
             next(); *++e = PSH; expr(Mul);
             if (t > PTR && t == ty) { *++e = SUB; *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = DIV; ty = INT; }
             else if ((ty = t) > PTR) { *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = MUL; *++e = SUB; }
             else *++e = SUB;
         }
-        else if (tk == Mul) { next(); *++e = PSH; expr(Inc); *++e = MUL; ty = INT; }
-        else if (tk == Div) { next(); *++e = PSH; expr(Inc); *++e = DIV; ty = INT; }
-        else if (tk == Mod) { next(); *++e = PSH; expr(Inc); *++e = MOD; ty = INT; }
-        else if (tk == Inc || tk == Dec) {
+        else if (tk == Mul) { next(); *++e = PSH; expr(Inc); *++e = MUL; ty = INT; } // a * b
+        else if (tk == Div) { next(); *++e = PSH; expr(Inc); *++e = DIV; ty = INT; } // a / b
+        else if (tk == Mod) { next(); *++e = PSH; expr(Inc); *++e = MOD; ty = INT; } // a % b
+        else if (tk == Inc || tk == Dec) { // expr++/expr--
             if (*e == LC) { *e = PSH; *++e = LC; }
             else if (*e == LI) { *e = PSH; *++e = LI; }
             else { printf("%d: bad lvalue in post-increment\n", line); exit(-1); }
@@ -278,7 +285,7 @@ void expr(int lev)
             *++e = (tk == Inc) ? SUB : ADD;
             next();
         }
-        else if (tk == Brak) {
+        else if (tk == Brak) { // a[]
             next(); *++e = PSH; expr(Assign);
             if (tk == ']') next(); else { printf("%d: close bracket expected\n", line); exit(-1); }
             if (t > PTR) { *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = MUL;  }
@@ -415,7 +422,6 @@ int parse() {
                     while (tk == Mul) { next(); ty = ty + PTR; }
                     if (tk != Id) { printf("%d: bad parameter declaration\n", line); exit(-1); }
                     if (id[Class] == Loc) { printf("%d: duplicate parameter definition\n", line); exit(-1); }
-                    // parameters are alse locals, so use local context, backup
                     id[HClass] = id[Class]; id[Class] = Loc;
                     id[HType]  = id[Type];  id[Type] = ty;
                     id[HVal]   = id[Val];   id[Val] = i++; // local offset
@@ -424,7 +430,7 @@ int parse() {
                 }
                 next();
                 if (tk != '{') { printf("%d: bad function definition\n", line); exit(-1); }
-                loc = ++i;
+                loc = ++i; // for count locals
                 next();
                 while (tk == Int || tk == Char) { // local variables
                     bt = (tk == Int) ? INT : CHAR;
@@ -444,16 +450,12 @@ int parse() {
                     next();
                 }
                 *++e = ENT; // first instruction is entering body
-                *++e = i - loc; // amount of all locals
+                *++e = i - loc; // amount of all locals, for sp extension
                 while (tk != '}') stmt(); // function body
                 *++e = LEV; // leave body
                 id = sym; // unwind symbol table locals
                 while (id[Tk]) {
-                    if (id[Class] == Loc) {
-                        id[Class] = id[HClass];
-                        id[Type] = id[HType];
-                        id[Val] = id[HVal];
-                    }
+                    if (id[Class] == Loc) { id[Class] = id[HClass]; id[Type] = id[HType]; id[Val] = id[HVal]; }
                     id = id + Idsz;
                 }
             }
@@ -532,6 +534,7 @@ int main(int argc, char **argv)
     if (argc > 0 && **argv == '-' && (*argv)[1] == 's') { src = 1; --argc; ++argv; }
     if (argc > 0 && **argv == '-' && (*argv)[1] == 'd') { debug = 1; --argc; ++argv; }
     if (argc < 1) { printf("usage: xc [-s] [-d] file ...\n"); return -1; }
+    // instructions names, format with the same width(5), for -s and -d print
     ins = "LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,"
         "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"
         "OPEN,READ,CLOS,PRTF,MALC,MSET,MCMP,EXIT,";
@@ -543,16 +546,13 @@ int main(int argc, char **argv)
     if (!(le = e = malloc(poolsz))) { printf("could not malloc(%d) text area\n", poolsz); return -1; }
     if (!(data = malloc(poolsz))) { printf("could not malloc(%d) data area\n", poolsz); return -1; }
     if (!(sp = malloc(poolsz))) { printf("could not malloc(%d) stack area\n", poolsz); return -1; }
-
-    memset(sym,  0, poolsz);
-    memset(e,    0, poolsz);
-    memset(data, 0, poolsz);
+    memset(sym, 0, poolsz); memset(e, 0, poolsz); memset(data, 0, poolsz); memset(sp, 0, poolsz);
 
     p = "char else enum if int return sizeof while "
         "open read close printf malloc memset memcmp exit void main";
     i = Char; while (i <= While) { next(); id[Tk] = i++; } // add keywords to symbol table
     i = OPEN; while (i <= EXIT) { next(); id[Class] = Sys; id[Type] = INT; id[Val] = i++; } // add library to symbol table
-    next(); id[Tk] = Char; // handle void type
+    next(); id[Tk] = Char; // treat void as char type, due to lack of void type
     next(); idmain = id; // keep track of main
 
     if (!(lp = p = malloc(poolsz))) { printf("could not malloc(%d) source area\n", poolsz); return -1; }
@@ -560,8 +560,7 @@ int main(int argc, char **argv)
     p[i] = 0; // let source ends up with \0
     close(fd);
 
-    // parse declarations
-    parse();
+    parse(); // syntax directed translation
 
     if (!(pc = (int *)idmain[Val])) { printf("main() not defined\n"); return -1; }
     if (src) return 0;
