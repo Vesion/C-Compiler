@@ -422,6 +422,7 @@ int parse() {
                     while (tk == Mul) { next(); ty = ty + PTR; }
                     if (tk != Id) { printf("%d: bad parameter declaration\n", line); exit(-1); }
                     if (id[Class] == Loc) { printf("%d: duplicate parameter definition\n", line); exit(-1); }
+                    // parameters are also locals
                     id[HClass] = id[Class]; id[Class] = Loc;
                     id[HType]  = id[Type];  id[Type] = ty;
                     id[HVal]   = id[Val];   id[Val] = i++; // local offset
@@ -430,9 +431,9 @@ int parse() {
                 }
                 next();
                 if (tk != '{') { printf("%d: bad function definition\n", line); exit(-1); }
-                loc = ++i; // for count locals
+                loc = ++i; // for count inner variables
                 next();
-                while (tk == Int || tk == Char) { // local variables
+                while (tk == Int || tk == Char) { // inner variables
                     bt = (tk == Int) ? INT : CHAR;
                     next();
                     while (tk != ';') {
@@ -533,7 +534,7 @@ int main(int argc, char **argv)
     --argc; ++argv;
     if (argc > 0 && **argv == '-' && (*argv)[1] == 's') { src = 1; --argc; ++argv; }
     if (argc > 0 && **argv == '-' && (*argv)[1] == 'd') { debug = 1; --argc; ++argv; }
-    if (argc < 1) { printf("usage: xc [-s] [-d] file ...\n"); return -1; }
+    if (argc < 1) { printf("usage: ./xc [-s] [-d] file ...\n"); return -1; }
     // instructions names, format with the same width(5), for -s and -d print
     ins = "LEA ,IMM ,JMP ,JSR ,BZ  ,BNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PSH ,"
         "OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,"

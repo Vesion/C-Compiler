@@ -27,3 +27,23 @@ while_statement ::= 'while' '(' expression ')' non_empty_statement
 
 
 
+### Activation Record (Frame)
+
+```c
+|    ....       | high address
++---------------+
+| arg: param_a  |    bp + 3
++---------------+
+| arg: param_b  |    bp + 2
++---------------+
+|return address |    bp + 1
++---------------+
+| old BP        | <- bp
++---------------+
+| local_1       |    bp - 1
++---------------+
+| local_2       |    bp - 2
++---------------+
+|    ....       |  low address
+```
+

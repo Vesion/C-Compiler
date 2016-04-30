@@ -1,13 +1,14 @@
 #include <stdio.h>
 char g1, *g2;
 enum {e = 1};
-char f(char* a) { return *a; }
+void f(char a, int x, char y, int z) {
+    char b;
+    a = 1;
+    b = 2;
+}
 int main() { 
-    int a, b;
-    a = -12;
-    b;
-    if (a)  99;
-    else  100;
+    char *s;
+    s = malloc(100);
     return 0; 
 }
 
