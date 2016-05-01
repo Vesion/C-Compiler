@@ -7,8 +7,7 @@ void f(char a, int x, char y, int z) {
     b = 2;
 }
 int main() { 
-    char *s;
-    s = malloc(100);
+    printf("hello\n");
     return 0; 
 }
 
