@@ -1,13 +1,14 @@
 #include <stdio.h>
 char g1, *g2;
 enum {e = 1};
-void f(char a, int x, char y, int z) {
+void f(char a) {
     char b;
     a = 1;
     b = 2;
+    printf("hello\n");
 }
 int main() { 
-    printf("hello\n");
+    f(0);
     return 0; 
 }
 

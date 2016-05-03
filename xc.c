@@ -432,7 +432,7 @@ int parse() {
                 }
                 next();
                 if (tk != '{') { printf("%d: bad function definition\n", line); exit(-1); }
-                loc = ++i; // for count inner variables
+                loc = ++i; // for count inner variables, more details in vm.md
                 next();
                 while (tk == Int || tk == Char) { // inner variables
                     bt = (tk == Int) ? INT : CHAR;
@@ -454,7 +454,7 @@ int parse() {
                 *++e = ENT; // first instruction is entering body
                 *++e = i - loc; // amount of all locals, for sp extension
                 while (tk != '}') stmt(); // function body
-                *++e = LEV; // leave body
+                *++e = LEV; // in case of no explicit `return` in body
                 id = sym; // unwind symbol table locals
                 while (id[Tk]) {
                     if (id[Class] == Loc) { id[Class] = id[HClass]; id[Type] = id[HType]; id[Val] = id[HVal]; }
