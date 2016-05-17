@@ -7,8 +7,6 @@ This is a tiny C interpreter inspired by [c4](https://github.com/rswier/c4).
 
 **xc.c** is much like the original c4, whereas it has plenty of easy-to-understand comments. Self-interpreting is supported of course.
 
-Usage:
-
 ```shell
 > make
 > ./xc test.c
@@ -18,8 +16,6 @@ Usage:
 
 
 **xci.c** is a rough interpreter playing with input.
-
-Usage:
 
 ```c
 > ./xci
@@ -35,8 +31,6 @@ Usage:
 
 ### Subset of C
 
-Similar to c4:
-
 - Ignore all includes and macros;
 - Only `int`, `char` and (multilevel) pointers `*` to int or char types are supported;
 - Do not support `typedef`, `struct`, `union`, so no user-defined-classes;
@@ -49,3 +43,35 @@ Similar to c4:
 - Do not support `goto`, `break` and `continue` statements;
 - Do not support foward declaration, so mutal recursions are not allowed;
 - No type checking, although coercions are supported;
+
+
+
+### Language Spec
+
+```c
+program ::= {global_declaration}+
+
+global_declaration ::= enum_decl | variable_decl | function_decl
+
+enum_decl ::= 'enum' [id] '{' id ['=' num] {',' id ['=' num]} '}'
+
+variable_decl ::= type {'*'} id { ',' {'*'} id } ';'
+
+function_decl ::= type {'*'} id '(' parameter_decl ')' '{' body_decl '}'
+
+parameter_decl ::= type {'*'} id {',' type {'*'} id}
+
+body_decl ::= {variable_decl}, {statement}
+
+statement ::= non_empty_statement | empty_statement
+
+non_empty_statement ::= if_statement | while_statement | '{' statement '}'
+                     | 'return' expression | expression ';'
+
+if_statement ::= 'if' '(' expression ')' statement ['else' non_empty_statement]
+
+while_statement ::= 'while' '(' expression ')' non_empty_statement
+```
+
+
+

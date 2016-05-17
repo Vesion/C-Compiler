@@ -263,14 +263,14 @@ void expr(int lev) // operator precedence
         else if (tk == Shr) { next(); *++e = PSH; expr(Add); *++e = SHR; ty = INT; } // >>
         else if (tk == Add) { // a+b
             next(); *++e = PSH; expr(Mul);
-            if ((ty = t) > PTR) { *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = MUL;  }
+            if ((ty = t) > PTR) { *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = MUL;  } // pointer + number
             *++e = ADD;
         }
         else if (tk == Sub) { // a-b
             next(); *++e = PSH; expr(Mul);
-            if (t > PTR && t == ty) { *++e = SUB; *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = DIV; ty = INT; }
-            else if ((ty = t) > PTR) { *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = MUL; *++e = SUB; }
-            else *++e = SUB;
+            if (t > PTR && t == ty) { *++e = SUB; *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = DIV; ty = INT; } // pointer - pointer
+            else if ((ty = t) > PTR) { *++e = PSH; *++e = IMM; *++e = sizeof(int); *++e = MUL; *++e = SUB; } // pointer - number
+            else *++e = SUB; // number - number
         }
         else if (tk == Mul) { next(); *++e = PSH; expr(Inc); *++e = MUL; ty = INT; } // a * b
         else if (tk == Div) { next(); *++e = PSH; expr(Inc); *++e = DIV; ty = INT; } // a / b
